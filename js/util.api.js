@@ -1,7 +1,7 @@
 
 var TIMEOUT_FAILOVER_API = 4000; // 4 seconds (in ms)
-var TIMEOUT_FAILOVER_API_SINGLE = 10000; // 10 seconds (in ms) - timeout when just one server in the list
 var TIMEOUT_MULTI_API = 8000; // 8 seconds (in ms)
+var TIMEOUT_OTHER = 7000; // 7 seconds (in ms)
 
 //Inlude a .url param in every jqXHR object -- http://stackoverflow.com/a/11980396
 $.ajaxSetup({
@@ -142,6 +142,23 @@ function _encodeForJSONRPCOverGET(params) {
   return encodeURIComponent(bytesToBase64(stringToBytes(JSON.stringify(params))));
 }
 
+function makeJSONRPCCall(endpoints, method, params, timeout, onSuccess, onError) {
+  var extraAJAXOpts = {
+    'contentType': 'application/json; charset=utf-8',
+    'dataType': 'json'
+  }
+  if(timeout) extraAJAXOpts['timeout'] = timeout;
+  
+  return fetchData(endpoints,
+     onSuccess, onError,
+     JSON.stringify({
+          "jsonrpc": "2.0",
+          "id": 0,
+          "method": method,
+          "params": params
+     }), extraAJAXOpts, true);
+}
+
 function _makeJSONAPICall(destType, endpoints, method, params, timeout, onSuccess, onError, httpMethod) {
   /*Makes a JSON RPC API call to a specific counterpartyd/counterblockd endpoint.
    
@@ -161,60 +178,11 @@ function _makeJSONAPICall(destType, endpoints, method, params, timeout, onSucces
   assert(httpMethod == "POST" || httpMethod == "GET", "Invalid HTTP method");
   
   //make JSON API call to counterblockd
-  if(httpMethod == "POST") {
-    var extraAJAXOpts = {
-      'contentType': 'application/json; charset=utf-8',
-      'dataType': 'json',
-      'timeout': timeout
-    }
-    
-    if(destType == "counterblockd") {
-      fetchData(endpoints,
-        onSuccess, onError,
-        JSON.stringify({
-          "jsonrpc": "2.0",
-          "id": 0,
-          "method": method,
-          "params": params
-        }), extraAJAXOpts, true);
-    } else if(destType == "counterpartyd") {
-      //make JSON API call to counterblockd, which will proxy it to counterpartyd
-      fetchData(endpoints,
-        onSuccess, onError,
-        JSON.stringify({
-          "jsonrpc": "2.0",
-          "id": 0,
-          "method": "proxy_to_counterpartyd",
-          "params": {"method": method, "params": params }
-        }), extraAJAXOpts, true);
-    }
-  } else { //GET
-    //The GET approach encodes the API request parameters into a URL query string on a GET request
-    //NOTE: GET query support is currently NOT IMPLEMENTED ON THE SERVER SIDE.
-    var qs = null;
-    var extraAJAXOpts = {
-      'crossDomain': true,
-      'timeout': timeout
-    }
-    
-    if(destType == "counterblockd") {
-      qs = $.param({
-        "jsonrpc": "2.0",
-        "id": 0,
-        "method": method,
-        "params": _encodeForJSONRPCOverGET(params)
-      });
-      fetchData(_formulateEndpoints(endpoints, qs), onSuccess, onError, null, extraAJAXOpts, true);
-    } else if(destType == "counterpartyd") {
-      //make JSON API call to counterblockd, which will proxy it to counterpartyd
-      qs = $.param({
-        "jsonrpc": "2.0",
-        "id": 0,
-        "method": "proxy_to_counterpartyd",
-        "params": _encodeForJSONRPCOverGET({"method": method, "params": params })
-      });
-      fetchData(_formulateEndpoints(endpoints, qs), onSuccess, onError, null, extraAJAXOpts, true);
-    }
+  if(destType == "counterblockd") {
+    makeJSONRPCCall(endpoints, method, params, timeout, onSuccess, onError);
+  } else if(destType == "counterpartyd") {
+    //make JSON API call to counterblockd, which will proxy it to counterpartyd
+    makeJSONRPCCall(endpoints, "proxy_to_counterpartyd", {"method": method, "params": params }, timeout, onSuccess, onError);
   }
 }
 
@@ -229,11 +197,13 @@ function _getDestTypeFromMethod(method) {
       'get_owned_assets', 'get_asset_history', 'get_asset_extended_info', 'get_transaction_stats', 'get_wallet_stats', 'get_asset_pair_market_info',
       'get_market_price_summary', 'get_market_price_history', 'get_market_info', 'get_market_info_leaderboard', 'get_market_cap_history',
       'get_order_book_simple', 'get_order_book_buysell', 'get_trade_history',
-      'record_btc_open_order', 'cancel_btc_open_order', 'get_bets', 'get_user_bets', 'get_feed', 'get_feeds_by_source',
+      'get_bets', 'get_user_bets', 'get_feed', 'get_feeds_by_source',
       'parse_base64_feed', 'get_open_rps_count', 'get_user_rps', 
       'get_users_pairs', 'get_market_orders', 'get_market_trades', 'get_markets_list', 'get_market_details',
       'get_pubkey_for_address', 'create_armory_utx', 'convert_armory_signedtx_to_raw_hex', 'create_support_case',
-      'get_escrowed_balances'].indexOf(method) >= 0) {
+      'get_escrowed_balances', 'autobtcescrow_get_escrow_address', 'autobtcescrow_create', 'autobtcescrow_get_by_record_id',
+      'autobtcescrow_get_by_funded_order_match_id', 'autobtcescrow_get_by_source_address',
+      'autobtcescrow_get_escrow_balance_by_source_address'].indexOf(method) >= 0) {
     destType = "counterblockd";
   }
   return destType;
@@ -243,7 +213,7 @@ function supportUnconfirmedChangeParam(method) {
   return method.split("_").shift()=="create" && _getDestTypeFromMethod(method)=="counterpartyd";
 }
 
-function multiAPIPrimative(method, params, onFinished) {
+function _multiAPIPrimative(method, params, onFinished) {
   /*Make request to all servers (parallelized), returning results from all servers into a list.
     (This is a primative and is not normally called directly outside of this module.)
   
@@ -317,7 +287,7 @@ function failoverAPI(method, params, onSuccess, onError) {
       bootbox.alert("failoverAPI: Call failed (failed over across all servers). Method: " + method + "; Last error: " + message);
     };
   }
-  //525 DETECTION (needed here and in multiAPIPrimative) - wrap onError (so that this works even for user supplied onError)
+  //525 DETECTION (needed here and in _multiAPIPrimative) - wrap onError (so that this works even for user supplied onError)
   onErrorOverride = function(jqXHR, textStatus, errorThrown, endpoint) {
     //detect a special case of all servers returning code 525, which would mean counterpartyd had a reorg and/or we are upgrading
     //TODO: this is not perfect in this failover case now because we only see the LAST error. We are currently assuming
@@ -333,8 +303,7 @@ function failoverAPI(method, params, onSuccess, onError) {
   }
 
   var destType = _getDestTypeFromMethod(method);
-  _makeJSONAPICall(destType, cwAPIUrls(), method, params,
-    cwAPIUrls().length == 1 ? TIMEOUT_FAILOVER_API_SINGLE : TIMEOUT_FAILOVER_API, onSuccess, onErrorOverride);
+  _makeJSONAPICall(destType, cwAPIUrls(), method, params, TIMEOUT_FAILOVER_API, onSuccess, onErrorOverride);
 }
   
 function multiAPI(method, params, onSuccess, onError) {
@@ -353,7 +322,7 @@ function multiAPI(method, params, onSuccess, onError) {
     };
   }
 
-  multiAPIPrimative(method, params, function(results) {
+  _multiAPIPrimative(method, params, function(results) {
     //look for the first success and use that...
     for(var i=0; i < results.length; i++) {
       if(results[i]['success']) {
@@ -404,7 +373,7 @@ function multiAPIConsensus(method, params, onSuccess, onConsensusError, onSysErr
     };
   }
  
-  multiAPIPrimative(method, params, function(results) {
+  _multiAPIPrimative(method, params, function(results) {
     var successResults = [];
     var i = 0;
     for(i=0; i < results.length; i++) {
@@ -417,13 +386,8 @@ function multiAPIConsensus(method, params, onSuccess, onConsensusError, onSysErr
       return onSysError(results[i-1]['jqXHR'], results[i-1]['textStatus'], results[i-1]['errorThrown'], results[i-1]['endpoint']);
     }
     
-    if(typeof successResults[0] === "string" && _.startsWith(successResults[0], ARMORY_OFFLINE_TX_PREFIX)) { //armory offline tx
-      if(_.uniq(successResults).length != 1)
-        return onConsensusError(successResults); //armory offline tx where not all consensus data matches
-    } else { //regular tx
-      assert(params['source']);
-      if (!CWBitcore.compareOutputs(params['source'], successResults))
-        return onConsensusError(successResults); //regular tx where not all consensus data matches
+    if (!CWBitcore.compareOutputs(params['source'], successResults)) {
+      return onConsensusError(successResults); //not all consensus data matches
     }
     
     //if here, all is well
@@ -452,7 +416,7 @@ function multiAPINewest(method, params, newestField, onSuccess, onError) {
     };
   }
   
-  multiAPIPrimative(method, params, function(results) {
+  _multiAPIPrimative(method, params, function(results) {
     var successResults = [];
     var i = 0;
     for(i=0; i < results.length; i++) {
