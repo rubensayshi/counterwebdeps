@@ -338,25 +338,39 @@ CWBitcore.checkTransactionDest = function(txHex, source, dest) {
 }
 
 CWBitcore.compareOutputs = function(source, txHexs) {
-  
-  var tx0 = CWBitcore.parseRawTransaction(txHexs[0]); 
 
-  for (var t = 1; t < txHexs.length; t++) {
-    var tx1 = CWBitcore.parseRawTransaction(txHexs[t]); 
-    if (tx1.outs.length != tx0.outs.length) {
-      return false;
-    }
-    for (var i=0; i<tx0.outs.length; i++) {
-      var addresses0 = CWBitcore.extractAddressFromTxOut(tx0.outs[i]).split(',').sort().join(',');
-      var addresses1 = CWBitcore.extractAddressFromTxOut(tx1.outs[i]).split(',').sort().join(',');
-      var amount0 = tx0.outs[i].getValue();
-      var amount1 = tx1.outs[i].getValue();
-
-      if (addresses0 != addresses1 || (addresses0.indexOf(source) == -1 && amount0 != amount1)) {
+  if (txHexs[0].indexOf("=====TXSIGCOLLECT") != -1) {
+    // armory transaction, we just compare if strings are the same.
+    for (var t = 1; t < txHexs.length; t++) {
+      if (txHexs[t] != txHexs[0]) {
         return false;
       }
     }
+
+  } else {
+
+    var tx0 = CWBitcore.parseRawTransaction(txHexs[0]); 
+
+    for (var t = 1; t < txHexs.length; t++) {
+      var tx1 = CWBitcore.parseRawTransaction(txHexs[t]); 
+      if (tx1.outs.length != tx0.outs.length) {
+        return false;
+      }
+      for (var i=0; i<tx0.outs.length; i++) {
+        var addresses0 = CWBitcore.extractAddressFromTxOut(tx0.outs[i]).split(',').sort().join(',');
+        var addresses1 = CWBitcore.extractAddressFromTxOut(tx1.outs[i]).split(',').sort().join(',');
+        var amount0 = tx0.outs[i].getValue();
+        var amount1 = tx1.outs[i].getValue();
+
+        if (addresses0 != addresses1 || (addresses0.indexOf(source) == -1 && amount0 != amount1)) {
+          return false;
+        }
+      }
+    }
+
   }
+  
+  
   return true;
 
 }
