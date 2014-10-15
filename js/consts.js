@@ -9,6 +9,7 @@ var REGULAR_DUST_SIZE = 5430;
 var MULTISIG_DUST_SIZE = 7800;
 var MIN_PRIME_BALANCE = 50000; //in satoshis ... == .0005
 var ASSET_CREATION_FEE_XCP = 0.5; //in normalized XCP
+var DIVIDEND_FEE_PER_HOLDER = 0.0002
 var MAX_ASSET_DESC_LENGTH = 41; //42, minus a null term character?
 var FEE_FRACTION_REQUIRED_DEFAULT_PCT = .9;   //0.90% of total order
 var FEE_FRACTION_PROVIDED_DEFAULT_PCT = 1;   //1.00% of total order
