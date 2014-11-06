@@ -230,6 +230,47 @@ CWBitcore.isValidAddress = function(val) {
   }
 }
 
+CWBitcore.isValidMultisigAddress = function(val) {
+  if (!USE_TESTNET) return false; // TODO: remove when multisig enable on mainnet
+  try {
+    console.log(val)
+    var addresses = val.split("_");
+    if (addresses.length != 4 && addresses.length != 5) {
+      return false;
+    }
+    required = parseInt(addresses.shift());
+    provided = parseInt(addresses.pop());
+    if (required == NaN || provided == NaN || provided != addresses.length || required > provided || required < 1) {
+      return false;
+    }
+    for (var a = 0; a < addresses.length; a++) {
+      console.log(addresses)
+      var address = new bitcore.Address(addresses[a]);
+      if (!address.isValid() || address.version() != NETWORK.addressVersion) {
+        return false;
+      }
+    }
+    return true;   
+  } catch (err) {
+    return false;
+  }
+}
+
+CWBitcore.MultisigAddressToAddresses = function(val) {
+  console.log("extract: " + val);
+  if (CWBitcore.isValidAddress(val)) {
+    return [val];
+  } else if (CWBitcore.isValidMultisigAddress(val)) {
+    var addresses = val.split("_");
+    addresses.shift();
+    addresses.pop();
+
+    return addresses;
+  } else {
+    return [];
+  }  
+}
+
 CWBitcore.parseRawTransaction = function(txHex) {
   checkArgType(txHex, "string");
 
@@ -319,17 +360,31 @@ CWBitcore.extractChangeTxoutValue = function(source, txHex) {
 CWBitcore.checkTransactionDest = function(txHex, source, dest) { 
   checkArgsType(arguments, ["string", "object", "object"]);
 
+  var newDest = [];
+  for (var d = 0; d < dest.length; d++) {
+    console.log(CWBitcore.MultisigAddressToAddresses(dest[d]))
+    newDest = newDest.concat(CWBitcore.MultisigAddressToAddresses(dest[d]));
+  }
+  dest = newDest;
+
   // unserialize raw transaction
   var tx = CWBitcore.parseRawTransaction(txHex);    
   for (var i=0; i<tx.outs.length; i++) {
       var addresses = CWBitcore.extractAddressFromTxOut(tx.outs[i]).split(',');
+      console.log('addresses:')
+      console.log(addresses);
+      console.log('source:')
+      console.log(source);
+      console.log('dest:')
+      console.log(dest);
       var containsSource = _.intersection(addresses, source).length > 0;
       var containsDest = _.intersection(addresses, dest).length > 0;
       if (!containsSource && !containsDest) {
         return false;
       } else if (addresses.length>1) {
         // if multisig we accept only value==MULTISIG_DUST_SIZE
-        if (tx.outs[i].getValue()>MULTISIG_DUST_SIZE) {
+        if (tx.outs[i].getValue()>MULTISIG_DUST_SIZE && dest.sort().join() != addresses.sort().join()) {
+          console.log('MULTISIG_DUST_SIZE: ' + tx.outs[i].getValue())
           return false;
         }
       }
