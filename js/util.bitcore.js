@@ -230,6 +230,47 @@ CWBitcore.isValidAddress = function(val) {
   }
 }
 
+CWBitcore.isValidMultisigAddress = function(val) {
+  if (!USE_TESTNET) return false; // TODO: remove when multisig enable on mainnet
+  try {
+    console.log(val)
+    var addresses = val.split("_");
+    if (addresses.length != 4 && addresses.length != 5) {
+      return false;
+    }
+    required = parseInt(addresses.shift());
+    provided = parseInt(addresses.pop());
+    if (required == NaN || provided == NaN || provided != addresses.length || required > provided || required < 1) {
+      return false;
+    }
+    for (var a = 0; a < addresses.length; a++) {
+      console.log(addresses)
+      var address = new bitcore.Address(addresses[a]);
+      if (!address.isValid() || address.version() != NETWORK.addressVersion) {
+        return false;
+      }
+    }
+    return true;   
+  } catch (err) {
+    return false;
+  }
+}
+
+CWBitcore.MultisigAddressToAddresses = function(val) {
+  console.log("extract: " + val);
+  if (CWBitcore.isValidAddress(val)) {
+    return [val];
+  } else if (CWBitcore.isValidMultisigAddress(val)) {
+    var addresses = val.split("_");
+    addresses.shift();
+    addresses.pop();
+
+    return addresses;
+  } else {
+    return [];
+  }  
+}
+
 CWBitcore.parseRawTransaction = function(txHex) {
   checkArgType(txHex, "string");
 
@@ -291,6 +332,45 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey) {
   return signedTx.tx.serialize().toString('hex');
 }
 
+// signNum: how many signatures already done + 1. minimum 2. 
+CWBitcore.signPartialSignedTransaction = function(unsignedHex, partialSigned, signNum, cwPrivateKey) {
+    checkArgsType(arguments, ["string", "string", "number", "object"]);
+
+    // Build wallet key
+    var address = cwPrivateKey.getAddress();
+    var wk = new bitcore.WalletKey({network:NETWORK, privKey:cwPrivateKey.getBitcoreECKey()});
+
+    var partialSignedTx = CWBitcore.parseRawTransaction(partialSigned);
+    var unsignedTx = CWBitcore.parseRawTransaction(unsignedHex);
+
+    // prepare  signed transaction
+    var signedTx = new bitcore.TransactionBuilder();
+    signedTx.tx = unsignedTx;
+
+    for (var i=0; i < unsignedTx.ins.length; i++) {
+
+        /* scriptPubKey from the unsigned tx */
+        var scriptPubKey = new bitcore.Script(unsignedTx.ins[i].s);
+        var pubKeys = scriptPubKey.capture();
+        
+        // generating hash for signature
+        var txSigHash = unsignedTx.hashForSignature(scriptPubKey, i, bitcore.Transaction.SIGHASH_ALL);
+       
+        /* Get the script of the partially signed signature */
+        var scriptSig =  partialSignedTx.ins[i].getScript();
+
+        // sign hash
+        newScriptSig = bitcore.TransactionBuilder.prototype._updateMultiSig(signNum - 1, wk, scriptSig, txSigHash, pubKeys);
+
+        // inject signed script in transaction object
+        if (newScriptSig) {
+            signedTx.tx.ins[i].s = newScriptSig.getBuffer();
+        }
+
+    }
+    return signedTx.tx.serialize().toString('hex');
+}
+
 CWBitcore.extractAddressFromTxOut = function(txout) {
   checkArgType(txout, "object");
 
@@ -319,6 +399,13 @@ CWBitcore.extractChangeTxoutValue = function(source, txHex) {
 CWBitcore.checkTransactionDest = function(txHex, source, dest) { 
   checkArgsType(arguments, ["string", "object", "object"]);
 
+  var newDest = [];
+  for (var d = 0; d < dest.length; d++) {
+    console.log(CWBitcore.MultisigAddressToAddresses(dest[d]))
+    newDest = newDest.concat(CWBitcore.MultisigAddressToAddresses(dest[d]));
+  }
+  dest = newDest;
+
   // unserialize raw transaction
   var tx = CWBitcore.parseRawTransaction(txHex);    
   for (var i=0; i<tx.outs.length; i++) {
@@ -329,7 +416,8 @@ CWBitcore.checkTransactionDest = function(txHex, source, dest) {
         return false;
       } else if (addresses.length>1) {
         // if multisig we accept only value==MULTISIG_DUST_SIZE
-        if (tx.outs[i].getValue()>MULTISIG_DUST_SIZE) {
+        if (tx.outs[i].getValue()>MULTISIG_DUST_SIZE && dest.sort().join() != addresses.sort().join()) {
+          console.log('MULTISIG_DUST_SIZE: ' + tx.outs[i].getValue())
           return false;
         }
       }
