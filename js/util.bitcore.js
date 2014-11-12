@@ -332,6 +332,45 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey) {
   return signedTx.tx.serialize().toString('hex');
 }
 
+// signNum: how many signatures already done + 1. minimum 2. 
+CWBitcore.signPartialSignedTransaction = function(unsignedHex, partialSigned, signNum, cwPrivateKey) {
+    checkArgsType(arguments, ["string", "string", "number", "object"]);
+
+    // Build wallet key
+    var address = cwPrivateKey.getAddress();
+    var wk = new bitcore.WalletKey({network:NETWORK, privKey:cwPrivateKey.getBitcoreECKey()});
+
+    var partialSignedTx = CWBitcore.parseRawTransaction(partialSigned);
+    var unsignedTx = CWBitcore.parseRawTransaction(unsignedHex);
+
+    // prepare  signed transaction
+    var signedTx = new bitcore.TransactionBuilder();
+    signedTx.tx = unsignedTx;
+
+    for (var i=0; i < unsignedTx.ins.length; i++) {
+
+        /* scriptPubKey from the unsigned tx */
+        var scriptPubKey = new bitcore.Script(unsignedTx.ins[i].s);
+        var pubKeys = scriptPubKey.capture();
+        
+        // generating hash for signature
+        var txSigHash = unsignedTx.hashForSignature(scriptPubKey, i, bitcore.Transaction.SIGHASH_ALL);
+       
+        /* Get the script of the partially signed signature */
+        var scriptSig =  partialSignedTx.ins[i].getScript();
+
+        // sign hash
+        newScriptSig = bitcore.TransactionBuilder.prototype._updateMultiSig(signNum - 1, wk, scriptSig, txSigHash, pubKeys);
+
+        // inject signed script in transaction object
+        if (newScriptSig) {
+            signedTx.tx.ins[i].s = newScriptSig.getBuffer();
+        }
+
+    }
+    return signedTx.tx.serialize().toString('hex');
+}
+
 CWBitcore.extractAddressFromTxOut = function(txout) {
   checkArgType(txout, "object");
 
