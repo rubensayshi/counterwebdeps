@@ -201,7 +201,7 @@ function _getDestTypeFromMethod(method) {
       'parse_base64_feed', 'get_open_rps_count', 'get_user_rps', 
       'get_users_pairs', 'get_market_orders', 'get_market_trades', 'get_markets_list', 'get_market_details',
       'get_pubkey_for_address', 'create_armory_utx', 'convert_armory_signedtx_to_raw_hex', 'create_support_case',
-      'get_escrowed_balances', 'proxy_to_autobtcescrow', 'get_vennd_machine'].indexOf(method) >= 0) {
+      'get_escrowed_balances', 'proxy_to_autobtcescrow', 'get_vennd_machine', 'get_script_pub_key'].indexOf(method) >= 0) {
     destType = "counterblockd";
   }
   return destType;

@@ -280,6 +280,112 @@ CWBitcore.parseRawTransaction = function(txHex) {
   return tx;
 }
 
+CWBitcore.genKeyMap = function(cwPrivateKeys) {
+  var wkMap = {};
+  for (var i in cwPrivateKeys) {
+    wkMap[cwPrivateKeys[i].getAddress()] = new bitcore.WalletKey({network:NETWORK, privKey:cwPrivateKeys[i].getBitcoreECKey()});
+  }
+  return wkMap;
+}
+
+CWBitcore.signHash = function(signedTx, scriptPubKey, vin_index, cwPrivateKey, callback) {
+
+  var address = cwPrivateKey.getAddress();
+  var wkMap = CWBitcore.genKeyMap([cwPrivateKey]);
+
+  // function used to each for each type
+  var fnToSign = {};
+  fnToSign[bitcore.Script.TX_PUBKEYHASH] = bitcore.TransactionBuilder.prototype._signPubKeyHash;
+  fnToSign[bitcore.Script.TX_PUBKEY]     = bitcore.TransactionBuilder.prototype._signPubKey;
+  fnToSign[bitcore.Script.TX_MULTISIG]   = bitcore.TransactionBuilder.prototype._signMultiSig;
+  fnToSign[bitcore.Script.TX_SCRIPTHASH] = bitcore.TransactionBuilder.prototype._signScriptHash;
+
+  var input = {
+      address: address,
+      scriptPubKey: scriptPubKey,
+      scriptType: scriptPubKey.classify(),
+      i: vin_index
+  };  
+
+  if (input.scriptType == 0 && scriptPubKey.chunks.length > 1 && scriptPubKey.chunks[0] == 0 && input.scriptType == bitcore.Script.TX_MULTISIG) {
+     
+    var txid = signedTx.tx.ins[vin_index].getOutpointHash();
+    var vout = signedTx.tx.ins[vin_index].getOutpointIndex();
+
+    var tx_hash = txid.toString('hex');
+    var tmp = "";
+    for (var t=0; t<=62; t = t + 2) tmp = tx_hash.substring(t, t + 2) + tmp;
+    tx_hash = tmp;
+    // fetch the original script pub key (not signed)
+    failoverAPI('get_script_pub_key', {'tx_hash': tx_hash, 'vout_index': vout}, function(data) {
+      var s = bitcore.buffertools.fromHex(new bitcore.Buffer(data['scriptPubKey']['hex']));
+      var unsignedScriptPubKey = new bitcore.Script(s);
+      var pubKeys = unsignedScriptPubKey.capture();
+      var wk = null;
+      var sigPrio = 0;
+      for (var p = 0; p < pubKeys.length; p++) {
+        wk = signedTx._findWalletKey(wkMap, {
+          pubKeyBuf: pubKeys[p]
+        });
+        if (wk) {
+          sigPrio = p
+          break;
+        }
+      }
+      if (!wk) {
+        throw "Private key not found";
+      }
+      // generating hash for signature
+      var txSigHash = signedTx.tx.hashForSignature(unsignedScriptPubKey, vin_index, bitcore.Transaction.SIGHASH_ALL);
+      /* Get the script of the partially signed signature */
+      var scriptSig =  signedTx.tx.ins[i].getScript();
+      // sign hash
+      newScriptSig = signedTx._updateMultiSig(sigPrio, wk, scriptSig, txSigHash, pubKeys);
+      callback(newScriptSig.getBuffer(), vin_index);
+    });
+
+  } else {
+    // generating hash for signature
+    var txSigHash = signedTx.tx.hashForSignature(scriptPubKey, vin_index, bitcore.Transaction.SIGHASH_ALL);
+    // empty the script
+    signedTx.tx.ins[vin_index].s = bitcore.util.EMPTY_BUFFER;
+    // sign hash
+    var ret = fnToSign[input.scriptType].call(signedTx, wkMap, input, txSigHash);
+
+    if (ret && ret.signaturesAdded > 0) {
+      callback(ret.script, vin_index);
+    } else {
+      throw "Private key not found";
+    }
+  }
+}
+
+CWBitcore.signRawTransaction2 = function(unsignedHex, cwPrivateKey, callback) {
+
+  // unserialize raw transaction
+  var unsignedTx = CWBitcore.parseRawTransaction(unsignedHex);   
+  // prepare  signed transaction
+  var signedTx = new bitcore.TransactionBuilder();
+  //signedTx.tx = CWBitcore.prepareSignedTransaction(unsignedTx);
+  signedTx.tx = unsignedTx;
+
+  var signedIns = 0;
+
+  for (var vin_index=0; vin_index < unsignedTx.ins.length; vin_index++) {
+    var scriptPubKey = new bitcore.Script(unsignedTx.ins[i].s);
+    CWBitcore.signHash(signedTx, scriptPubKey, vin_index, cwPrivateKey, function(signedScript, vi) {
+      // inject signed script in transaction object
+      if (signedScript) {
+        signedTx.tx.ins[vi].s = signedScript;
+      }
+      signedIns++;
+      if (signedIns == unsignedTx.ins.length) {
+        callback(signedTx.tx.serialize().toString('hex'));
+      }
+    });
+  }
+}
+
 CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey) {
   checkArgsType(arguments, ["string", "object"]);
 
@@ -330,45 +436,6 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey) {
 
   }
   return signedTx.tx.serialize().toString('hex');
-}
-
-// signNum: how many signatures already done + 1. minimum 2. 
-CWBitcore.signPartialSignedTransaction = function(unsignedHex, partialSigned, signNum, cwPrivateKey) {
-    checkArgsType(arguments, ["string", "string", "number", "object"]);
-
-    // Build wallet key
-    var address = cwPrivateKey.getAddress();
-    var wk = new bitcore.WalletKey({network:NETWORK, privKey:cwPrivateKey.getBitcoreECKey()});
-
-    var partialSignedTx = CWBitcore.parseRawTransaction(partialSigned);
-    var unsignedTx = CWBitcore.parseRawTransaction(unsignedHex);
-
-    // prepare  signed transaction
-    var signedTx = new bitcore.TransactionBuilder();
-    signedTx.tx = unsignedTx;
-
-    for (var i=0; i < unsignedTx.ins.length; i++) {
-
-        /* scriptPubKey from the unsigned tx */
-        var scriptPubKey = new bitcore.Script(unsignedTx.ins[i].s);
-        var pubKeys = scriptPubKey.capture();
-        
-        // generating hash for signature
-        var txSigHash = unsignedTx.hashForSignature(scriptPubKey, i, bitcore.Transaction.SIGHASH_ALL);
-       
-        /* Get the script of the partially signed signature */
-        var scriptSig =  partialSignedTx.ins[i].getScript();
-
-        // sign hash
-        newScriptSig = bitcore.TransactionBuilder.prototype._updateMultiSig(signNum - 1, wk, scriptSig, txSigHash, pubKeys);
-
-        // inject signed script in transaction object
-        if (newScriptSig) {
-            signedTx.tx.ins[i].s = newScriptSig.getBuffer();
-        }
-
-    }
-    return signedTx.tx.serialize().toString('hex');
 }
 
 CWBitcore.extractAddressFromTxOut = function(txout) {

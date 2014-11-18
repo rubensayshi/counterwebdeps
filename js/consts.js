@@ -156,7 +156,6 @@ var USE_TESTNET = (   (((location.pathname == "/" || location.pathname == "/src/
                    || location.hostname.indexOf('testnet') != -1) ? true : false
                   );
 
-
 var BLOCKEXPLORER_URL = USE_TESTNET ? "http://test.bitcore.io" : "http://live.bitcore.io";
 var GOOGLE_ANALYTICS_UAID = null; //will be set in counterwallet.js
 var ROLLBAR_ACCESS_TOKEN = null; //will be set in counterwallet.js
