@@ -231,7 +231,6 @@ CWBitcore.isValidAddress = function(val) {
 }
 
 CWBitcore.isValidMultisigAddress = function(val) {
-  if (!USE_TESTNET) return false; // TODO: remove when multisig enable on mainnet
   try {
     console.log(val)
     var addresses = val.split("_");
