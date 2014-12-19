@@ -306,7 +306,7 @@ CWBitcore.signHash = function(signedTx, scriptPubKey, vin_index, cwPrivateKey, c
       i: vin_index
   };  
 
-  if (input.scriptType == 0 && scriptPubKey.chunks.length > 1 && scriptPubKey.chunks[0] == 0 && input.scriptType == bitcore.Script.TX_MULTISIG) {
+  if (input.scriptType == 0 && scriptPubKey.chunks.length > 1 && scriptPubKey.chunks[0] == 0) {
      
     var txid = signedTx.tx.ins[vin_index].getOutpointHash();
     var vout = signedTx.tx.ins[vin_index].getOutpointIndex();
