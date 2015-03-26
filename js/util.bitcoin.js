@@ -88,50 +88,6 @@ function makeQRCode(addr) {
   return qr.createImgTag(4);  
 }
 
-function getLinkForCPData(type, dataID, dataTitle, htmlize) {
-  if(typeof(dataTitle)==='undefined' || dataTitle === null) dataTitle = dataID;
-  if(typeof(htmlize)==='undefined' || htmlize === null) htmlize = true;
-  if(typeof(type)==='undefined') type = 'tx';
-  var url = null;
-  if(type == 'address') { //dataID is an address
-    url = "http://blockscan.com/address.aspx?q=" + dataID;
-  } else if(type == 'order') { //txID is an order ID
-    url = "http://blockscan.com/order.aspx?q=" + dataID;
-  } else if(type == 'tx') { //generic TX
-    url = "http://blockscan.com/tx.aspx?q=" + dataID;
-  } else {
-    assert(false, "Unknown type of " + type);
-  }
-  if(USE_TESTNET) {
-    return dataTitle ? dataTitle : dataID; //blockscan not for testnet currently
-  } else {
-    return htmlize ? ('<a href="' + url + '" target="_blank">' + dataTitle + '</a>') : url;  
-  }
-}
-
-function getTxHashLink(hash) {
-  // TODO: add link to blockscan when possible
-  var shortHash = hash.substr(hash.length-5);
-  if (hash.length == 128) {
-    shortHash += '...' + hash.substr(64, 5);
-  }
-  var link = '<span rel="tooltip" title="'+hash+'" data-placement="top" data-container="body" class="shortHash">'+shortHash+'</span>';
-
-  return link;
-}
-
-function getLinkForBlock(blockIndex, dataTitle, htmlize) {
-  if(typeof(dataTitle)==='undefined' || dataTitle === null) dataTitle = blockIndex;
-  if(typeof(htmlize)==='undefined' || htmlize === null) htmlize = true;
-  var url = BLOCKEXPLORER_URL + '/block-index/' + blockIndex;
-  return htmlize ? '<a href="' + url + '" target="_blank">' + dataTitle + '</a>' : url;
-}
-
-function getAddressLabel(address) {
-  //gets the address label if the address is in this wallet
-  return PREFERENCES['address_aliases'][hashToB64(address)] || address;
-}
-
 function testnetBurnDetermineEarned(blockHeight, burned) {
   //burned is the quantity of BTC to burn (as a float -- normalized value)
   //XCP quantity returned is as a float -- normalized value
