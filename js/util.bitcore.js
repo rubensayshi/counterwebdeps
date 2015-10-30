@@ -350,42 +350,13 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
 
                   multiSigInfo = CWBitcore.extractMultiSigInfoFromScript(inputObj.output.script);
 
-                  var signatures = script.chunks.slice(1, script.chunks.length);
-                  inputObj.signatures = multiSigInfo.publicKeys.map(function (pubKey) {
-                    var signatureMatch = null;
-                    signatures = signatures.filter(function (sigObj) {
-                      if (signatureMatch) {
-                        return true;
-                      }
-
-                      var signature = bitcore.Transaction.Signature({
-                        signature: bitcore.crypto.Signature.fromTxFormat(sigObj.buf),
-                        publicKey: pubKey,
-                        prevTxId: inputObj.prevTxId,
-                        outputIndex: inputObj.outputIndex,
-                        inputIndex: idx,
-                        sigtype: bitcore.crypto.Signature.SIGHASH_ALL
-                      });
-
-                      signature.signature.nhashtype = signature.sigtype;
-                      var isMatch = bitcore.Transaction.Sighash.verify(
-                        tx,
-                        signature.signature,
-                        signature.publicKey,
-                        signature.inputIndex,
-                        inputObj.output.script
-                      );
-
-                      if (isMatch) {
-                        signatureMatch = signature;
-                        return false;
-                      }
-
-                      return true;
-                    });
-
-                    return signatureMatch ? signatureMatch.toObject() : null;
-                  });
+                  inputObj.signatures = bitcore.Transaction.Input.MultiSig.normalizeSignatures(
+                    tx,
+                    new bitcore.Transaction.Input.MultiSig(inputObj, multiSigInfo.publicKeys, multiSigInfo.threshold),
+                    idx,
+                    script.chunks.slice(1, script.chunks.length).map(function(s) { return s.buf; }),
+                    multiSigInfo.publicKeys
+                  );
 
                   tx.inputs[idx] = new bitcore.Transaction.Input.MultiSig(inputObj, multiSigInfo.publicKeys, multiSigInfo.threshold);
 
