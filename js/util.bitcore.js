@@ -276,10 +276,6 @@ CWBitcore.genKeyMap = function(cwPrivateKeys) {
   return wkMap;
 }
 
-// @TODO: replace with API calls
-var msigScriptPubKey = null;
-var multiSigInfo = null;
-
 /**
  *
  * @param {string} unsignedHex
@@ -311,10 +307,11 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
           var inputObj;
 
           // dissect what was set as input script to use it as output script
-          var scriptPubKey = bitcore.Script(input._scriptBuffer.toString('hex'));
+          var script = bitcore.Script(input._scriptBuffer.toString('hex'));
+          var multiSigInfo;
           var addresses = [];
 
-          switch (scriptPubKey.classify()) {
+          switch (script.classify()) {
             case bitcore.Script.types.PUBKEY_OUT:
               inputObj = input.toObject();
               inputObj.output = bitcore.Transaction.Output({
@@ -323,7 +320,7 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
               });
               tx.inputs[idx] = new bitcore.Transaction.Input.PublicKey(inputObj);
 
-              addresses = [scriptPubKey.toAddress(NETWORK).toString()];
+              addresses = [script.toAddress(NETWORK).toString()];
 
               return cb(null, addresses);
 
@@ -335,60 +332,68 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
               });
               tx.inputs[idx] = new bitcore.Transaction.Input.PublicKeyHash(inputObj);
 
-              addresses = [scriptPubKey.toAddress(NETWORK).toString()];
+              addresses = [script.toAddress(NETWORK).toString()];
 
               return cb(null, addresses);
 
             case bitcore.Script.types.MULTISIG_IN:
               inputObj = input.toObject();
 
-              inputObj.output = bitcore.Transaction.Output({
-                script: msigScriptPubKey,
-                satoshis: 0 // we don't know this value, setting 0 because otherwise it's going to cry about not being an INT
-              });
-
-              var signatures = scriptPubKey.chunks.slice(1, scriptPubKey.chunks.length);
-              inputObj.signatures = multiSigInfo.publicKeys.map(function (pubKey) {
-                var signatureMatch = null;
-                signatures = signatures.filter(function (sigObj) {
-                  if (signatureMatch) {
-                    return true;
-                  }
-
-                  var signature = bitcore.Transaction.Signature({
-                    signature: bitcore.crypto.Signature.fromTxFormat(sigObj.buf),
-                    publicKey: pubKey,
-                    prevTxId: inputObj.prevTxId,
-                    outputIndex: inputObj.outputIndex,
-                    inputIndex: idx,
-                    sigtype: bitcore.crypto.Signature.SIGHASH_ALL
+              return failoverAPI(
+                'get_script_pub_key',
+                {tx_hash: inputObj.prevTxId, vout_index: inputObj.outputIndex},
+                function(data) {
+                  inputObj.output = bitcore.Transaction.Output({
+                    script: data['scriptPubKey']['hex'],
+                    satoshis: bitcore.Unit.fromBTC(data['value']).toSatoshis()
                   });
 
-                  signature.signature.nhashtype = signature.sigtype;
-                  var isMatch = bitcore.Transaction.Sighash.verify(
-                    tx,
-                    signature.signature,
-                    signature.publicKey,
-                    signature.inputIndex,
-                    inputObj.output.script
-                  );
+                  multiSigInfo = CWBitcore.extractMultiSigInfoFromScript(inputObj.output.script);
 
-                  if (isMatch) {
-                    signatureMatch = signature;
-                    return false;
-                  }
+                  var signatures = script.chunks.slice(1, script.chunks.length);
+                  inputObj.signatures = multiSigInfo.publicKeys.map(function (pubKey) {
+                    var signatureMatch = null;
+                    signatures = signatures.filter(function (sigObj) {
+                      if (signatureMatch) {
+                        return true;
+                      }
 
-                  return true;
-                });
+                      var signature = bitcore.Transaction.Signature({
+                        signature: bitcore.crypto.Signature.fromTxFormat(sigObj.buf),
+                        publicKey: pubKey,
+                        prevTxId: inputObj.prevTxId,
+                        outputIndex: inputObj.outputIndex,
+                        inputIndex: idx,
+                        sigtype: bitcore.crypto.Signature.SIGHASH_ALL
+                      });
 
-                return signatureMatch ? signatureMatch.toObject() : null;
-              });
+                      signature.signature.nhashtype = signature.sigtype;
+                      var isMatch = bitcore.Transaction.Sighash.verify(
+                        tx,
+                        signature.signature,
+                        signature.publicKey,
+                        signature.inputIndex,
+                        inputObj.output.script
+                      );
 
-              tx.inputs[idx] = new bitcore.Transaction.Input.MultiSig(inputObj, multiSigInfo.publicKeys, multiSigInfo.threshold);
+                      if (isMatch) {
+                        signatureMatch = signature;
+                        return false;
+                      }
 
-              addresses = CWBitcore.extractMultiSigAddressesFromScript(inputObj.output.script);
+                      return true;
+                    });
 
-              return cb(null, addresses);
+                    return signatureMatch ? signatureMatch.toObject() : null;
+                  });
+
+                  tx.inputs[idx] = new bitcore.Transaction.Input.MultiSig(inputObj, multiSigInfo.publicKeys, multiSigInfo.threshold);
+
+                  addresses = CWBitcore.extractMultiSigAddressesFromScript(inputObj.output.script);
+
+                  return cb(null, addresses);
+              }
+            );
 
             case bitcore.Script.types.MULTISIG_OUT:
               inputObj = input.toObject();
@@ -397,9 +402,7 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
                 satoshis: 0 // we don't know this value, setting 0 because otherwise it's going to cry about not being an INT
               });
 
-              msigScriptPubKey = inputObj.output.script;
-              multiSigInfo = CWBitcore.extractMultiSigInfoFromScript(msigScriptPubKey);
-
+              multiSigInfo = CWBitcore.extractMultiSigInfoFromScript(inputObj.output.script);
               tx.inputs[idx] = new bitcore.Transaction.Input.MultiSig(inputObj, multiSigInfo.publicKeys, multiSigInfo.threshold);
 
               addresses = CWBitcore.extractMultiSigAddressesFromScript(inputObj.output.script);
@@ -418,7 +421,7 @@ CWBitcore.signRawTransaction = function(unsignedHex, cwPrivateKey, disableIsFull
               return cb();
 
             default:
-              return cb(new Error("Unknown scriptPubKey [" + scriptPubKey.classify() + "](" + scriptPubKey.toASM() + ")"));
+              return cb(new Error("Unknown scriptPubKey [" + script.classify() + "](" + script.toASM() + ")"));
           }
 
         })(function(err, addresses) {

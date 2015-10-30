@@ -286,7 +286,7 @@ function failoverAPI(method, params, onSuccess, onError) {
     };
   }
   //525 DETECTION (needed here and in _multiAPIPrimative) - wrap onError (so that this works even for user supplied onError)
-  onErrorOverride = function(jqXHR, textStatus, errorThrown, endpoint) {
+  var onErrorOverride = function(jqXHR, textStatus, errorThrown, endpoint) {
     //detect a special case of all servers returning code 525, which would mean counterpartyd had a reorg and/or we are upgrading
     //TODO: this is not perfect in this failover case now because we only see the LAST error. We are currently assuming
     // that if a) the LAST server returned a 525, and b) all servers are erroring out or down, that all servers are
